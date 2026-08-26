@@ -334,6 +334,34 @@
   #saveStatus.ok{color:var(--green,#3e7d53);}
   #saveStatus.dirty{color:var(--red,#c1443c);}
 
+  /* ===== GLOBAL FIXED BUTTONS (export/import toujours visibles en haut, compte en haut à droite) =====
+     position:absolute (et non fixed) pour qu'ils restent tout en haut de la page
+     et défilent avec elle, au lieu de rester collés à l'écran et de cacher le
+     contenu pendant le scroll sur mobile. */
+  .global-io-btns{
+    position:absolute; top:10px; left:10px; z-index:1001;
+    display:flex; flex-direction:column; gap:8px;
+  }
+  .account-btn-wrap{
+    position:absolute; top:10px; right:10px; z-index:1001;
+  }
+  .modern-io-btn{
+    display:flex; align-items:center; gap:6px;
+    font-family:'Karla',sans-serif; font-weight:700; font-size:0.78rem;
+    padding:8px 14px; border-radius:999px; border:1px solid rgba(255,255,255,0.25);
+    background:rgba(28,42,34,0.55); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+    color:#F3F7F4; cursor:pointer; box-shadow:0 6px 16px rgba(0,0,0,0.25);
+    transition:all .15s ease; white-space:nowrap;
+  }
+  .modern-io-btn:hover{background:var(--gold,#c9a227); color:var(--board,#1c2a22); border-color:var(--gold,#c9a227); transform:translateY(-1px);}
+  .account-btn-wrap .modern-io-btn{background:rgba(193,68,60,0.65);}
+  .account-btn-wrap .modern-io-btn:hover{background:var(--red,#c1443c); color:#fff; border-color:var(--red,#c1443c);}
+  @media (max-width:640px){
+    .global-io-btns{top:6px; left:6px; gap:6px;}
+    .account-btn-wrap{top:6px; right:6px;}
+    .modern-io-btn{font-size:0.68rem; padding:6px 10px; gap:4px;}
+  }
+
   .vt-answer{
     filter: blur(5px);
     transition: filter 0.15s ease;
@@ -347,6 +375,18 @@
 </style>
 </head>
 <body>
+
+<!-- ===== BOUTONS GLOBAUX FIXES (toujours visibles) ===== -->
+<div class="global-io-btns">
+  <button id="exportResultsBtn" type="button" class="modern-io-btn">⬇️ Exporter résultats</button>
+  <button id="importResultsBtn" type="button" class="modern-io-btn">⬆️ Importer résultats</button>
+  <input type="file" id="importResultsInput" accept="application/json,.json" class="hidden">
+</div>
+
+<!-- ===== BOUTON COMPTE (visible seulement après login) ===== -->
+<div class="account-btn-wrap hidden" id="accountBtnWrap">
+  <button id="logoutBtn" type="button" class="modern-io-btn">🔁 Changer de compte</button>
+</div>
 
 <!-- ===== AUTH OVERLAY (compte + résultats sauvegardés automatiquement en .json dans le dossier) ===== -->
 <div id="authOverlay" class="auth-overlay">
@@ -401,10 +441,6 @@
     <div class="user-badge hidden" id="userBadge">
       👤 <span id="userBadgeName"></span>
       <span id="saveStatus"></span>
-      <button id="exportResultsBtn" type="button">⬇️ Exporter résultats (.json)</button>
-      <button id="importResultsBtn" type="button">⬆️ Importer résultats (.json)</button>
-      <input type="file" id="importResultsInput" accept="application/json,.json" class="hidden">
-      <button id="logoutBtn" type="button">Changer de compte</button>
     </div>
     <nav class="tabs" id="tabs">
       <button data-tab="home" class="active">Méthode</button>
@@ -955,6 +991,16 @@ function slugify(s){
     .replace(/[^a-z0-9]+/g,"_").replace(/^_+|_+$/g,"");
 }
 function resultsFileName(userKey){ return `${userKey}.json`; }
+/* Exporter/Importer doivent toujours fonctionner, connecté ou non.
+   Sans compte, on utilise une clé "invite" pour stocker/retrouver les résultats. */
+function activeResultsKey(){ return currentUser ? currentUser.key : "guest"; }
+function ensureAllResults(){
+  if(!allResults){
+    try{ allResults = normalizeResults(JSON.parse(localStorage.getItem("cdv_results_"+activeResultsKey())||"null")); }
+    catch(e){ allResults = defaultResults(); }
+  }
+  return allResults;
+}
 function defaultResults(){
   return {
     qm:{score:0,done:0,streak:0,fails:0,items:{}},
@@ -979,7 +1025,7 @@ function normalizeResults(obj){
   return base;
 }
 function saveQuizProgress(quizId, data){
-  if(!currentUser || !allResults) return;
+  if(!allResults) return;
   allResults[quizId] = data;
   persistResultsSoon();
 }
@@ -1063,7 +1109,7 @@ function setSaveStatus(kind){
   // que sur Chrome/Edge desktop ET seulement en contexte sécurisé
   // (https:// ou http://localhost) — jamais sur http://192.168..., jamais sur
   // Firefox/Safari, jamais sur mobile.
-  if(kind==="ok"){ el.textContent = "✅ Enregistré automatiquement sur le disque (fichier .json)"; el.className="ok"; }
+  if(kind==="ok"){ el.textContent = " "; el.className="ok"; }
   else if(kind==="saving"){ el.textContent = "💾 Enregistrement..."; el.className=""; }
   else if(kind==="dirty"){ el.textContent = "💾 Enregistré dans ce navigateur — pense à cliquer sur \"Exporter\" pour garder un vrai fichier .json"; el.className=""; }
   else if(kind==="error"){ el.textContent = "⚠️ Erreur d'écriture du fichier — utilise \"Exporter\" pour ne rien perdre"; el.className="dirty"; }
@@ -1077,11 +1123,12 @@ function persistResultsSoon(){
   resultsSaveTimer = setTimeout(persistResultsNow, 300);
 }
 async function persistResultsNow(){
-  if(!currentUser || !allResults) return;
+  if(!allResults) return;
   // Toujours garder une copie de secours dans localStorage, même quand un
   // vrai fichier .json est utilisé : ça protège contre une écriture disque
   // qui échoue silencieusement (dossier déplacé, permission révoquée, etc.)
-  try{ localStorage.setItem("cdv_results_"+currentUser.key, JSON.stringify(allResults)); }catch(e){}
+  try{ localStorage.setItem("cdv_results_"+activeResultsKey(), JSON.stringify(allResults)); }catch(e){}
+  if(!currentUser){ setSaveStatus("dirty"); return; }
   if(resultsFileHandle){
     try{
       await writeJsonFile(resultsFileHandle, allResults);
@@ -1292,30 +1339,31 @@ function finalizeLogin(acc){
   document.getElementById("authOverlay").classList.add("hidden");
   document.getElementById("mainApp").classList.remove("hidden");
   document.getElementById("userBadge").classList.remove("hidden");
+  document.getElementById("accountBtnWrap").classList.remove("hidden");
   document.getElementById("userBadgeName").textContent = acc.nom;
   setSaveStatus(resultsFileHandle ? "ok" : "dirty");
   initQuizzesForUser();
 }
 document.getElementById("exportResultsBtn").addEventListener("click", ()=>{
-  if(currentUser && allResults) downloadJson(resultsFileName(currentUser.key), allResults);
+  ensureAllResults();
+  downloadJson(resultsFileName(activeResultsKey()), allResults);
 });
 
 /* ---- Importer un fichier .json de résultats (fonctionne partout : GitHub,
-   dossier PC, réseau local, n'importe quel navigateur) ---- */
+   dossier PC, réseau local, n'importe quel navigateur, connecté ou non) ---- */
 document.getElementById("importResultsBtn").addEventListener("click", ()=>{
-  if(!currentUser){ return; }
   document.getElementById("importResultsInput").click();
 });
 document.getElementById("importResultsInput").addEventListener("change", async (e)=>{
   const file = e.target.files && e.target.files[0];
   e.target.value = ""; // permet de réimporter le même fichier plus tard
-  if(!file || !currentUser) return;
+  if(!file) return;
   try{
     const text = await file.text();
     const parsed = text.trim() ? JSON.parse(text) : null;
     allResults = normalizeResults(parsed);
     await persistResultsNow();
-    initQuizzesForUser();
+    if(currentUser) initQuizzesForUser();
     alert("Résultats importés avec succès depuis " + file.name + " ✅");
   }catch(err){
     alert("Ce fichier n'est pas un fichier .json de résultats valide.");
@@ -1325,6 +1373,7 @@ document.getElementById("logoutBtn").addEventListener("click", ()=>{
   currentUser = null; allResults = null; resultsFileHandle = null; pendingUser = null;
   localStorage.removeItem("cdv_session_key");
   document.getElementById("userBadge").classList.add("hidden");
+  document.getElementById("accountBtnWrap").classList.add("hidden");
   document.getElementById("mainApp").classList.add("hidden");
   showStep("authStepWelcome");
   document.getElementById("authOverlay").classList.remove("hidden");
