@@ -401,7 +401,9 @@
     <div class="user-badge hidden" id="userBadge">
       👤 <span id="userBadgeName"></span>
       <span id="saveStatus"></span>
-      <button id="exportResultsBtn" type="button" class="hidden">⬇️ Exporter résultats</button>
+      <button id="exportResultsBtn" type="button">⬇️ Exporter résultats (.json)</button>
+      <button id="importResultsBtn" type="button">⬆️ Importer résultats (.json)</button>
+      <input type="file" id="importResultsInput" accept="application/json,.json" class="hidden">
       <button id="logoutBtn" type="button">Changer de compte</button>
     </div>
     <nav class="tabs" id="tabs">
@@ -1053,11 +1055,18 @@ async function ensurePermission(handle){
 /* ---- indicateur de sauvegarde ---- */
 function setSaveStatus(kind){
   const el = document.getElementById("saveStatus");
-  const exportBtn = document.getElementById("exportResultsBtn");
-  if(kind==="ok"){ el.textContent = " "; el.className="ok"; exportBtn.classList.add("hidden"); }
+  // Les boutons Exporter/Importer restent TOUJOURS visibles : quel que soit
+  // l'endroit où la page est ouverte (GitHub Pages, dossier normal sur PC,
+  // réseau local http://192.168.x.x, Firefox/Safari, mobile...), la seule
+  // façon garantie à 100% d'obtenir un vrai fichier .json est le téléchargement
+  // manuel (Blob + <a download>), car la File System Access API ne fonctionne
+  // que sur Chrome/Edge desktop ET seulement en contexte sécurisé
+  // (https:// ou http://localhost) — jamais sur http://192.168..., jamais sur
+  // Firefox/Safari, jamais sur mobile.
+  if(kind==="ok"){ el.textContent = "✅ Enregistré automatiquement sur le disque (fichier .json)"; el.className="ok"; }
   else if(kind==="saving"){ el.textContent = "💾 Enregistrement..."; el.className=""; }
-  else if(kind==="dirty"){ el.textContent = "💾 Enregistré dans ce navigateur"; el.className=""; exportBtn.classList.add("hidden"); }
-  else if(kind==="error"){ el.textContent = "⚠️ Erreur d'écriture du fichier"; el.className="dirty"; exportBtn.classList.remove("hidden"); }
+  else if(kind==="dirty"){ el.textContent = "💾 Enregistré dans ce navigateur — pense à cliquer sur \"Exporter\" pour garder un vrai fichier .json"; el.className=""; }
+  else if(kind==="error"){ el.textContent = "⚠️ Erreur d'écriture du fichier — utilise \"Exporter\" pour ne rien perdre"; el.className="dirty"; }
 }
 
 /* ---- écriture du fichier de résultats (débattue légèrement pour éviter trop d'écritures) ---- */
@@ -1069,6 +1078,10 @@ function persistResultsSoon(){
 }
 async function persistResultsNow(){
   if(!currentUser || !allResults) return;
+  // Toujours garder une copie de secours dans localStorage, même quand un
+  // vrai fichier .json est utilisé : ça protège contre une écriture disque
+  // qui échoue silencieusement (dossier déplacé, permission révoquée, etc.)
+  try{ localStorage.setItem("cdv_results_"+currentUser.key, JSON.stringify(allResults)); }catch(e){}
   if(resultsFileHandle){
     try{
       await writeJsonFile(resultsFileHandle, allResults);
@@ -1077,8 +1090,7 @@ async function persistResultsNow(){
       setSaveStatus("error");
     }
   } else {
-    try{ localStorage.setItem("cdv_results_"+currentUser.key, JSON.stringify(allResults)); setSaveStatus("dirty"); }
-    catch(e){ setSaveStatus("error"); }
+    setSaveStatus("dirty");
   }
 }
 function downloadJson(filename, data){
@@ -1286,6 +1298,28 @@ function finalizeLogin(acc){
 }
 document.getElementById("exportResultsBtn").addEventListener("click", ()=>{
   if(currentUser && allResults) downloadJson(resultsFileName(currentUser.key), allResults);
+});
+
+/* ---- Importer un fichier .json de résultats (fonctionne partout : GitHub,
+   dossier PC, réseau local, n'importe quel navigateur) ---- */
+document.getElementById("importResultsBtn").addEventListener("click", ()=>{
+  if(!currentUser){ return; }
+  document.getElementById("importResultsInput").click();
+});
+document.getElementById("importResultsInput").addEventListener("change", async (e)=>{
+  const file = e.target.files && e.target.files[0];
+  e.target.value = ""; // permet de réimporter le même fichier plus tard
+  if(!file || !currentUser) return;
+  try{
+    const text = await file.text();
+    const parsed = text.trim() ? JSON.parse(text) : null;
+    allResults = normalizeResults(parsed);
+    await persistResultsNow();
+    initQuizzesForUser();
+    alert("Résultats importés avec succès depuis " + file.name + " ✅");
+  }catch(err){
+    alert("Ce fichier n'est pas un fichier .json de résultats valide.");
+  }
 });
 document.getElementById("logoutBtn").addEventListener("click", ()=>{
   currentUser = null; allResults = null; resultsFileHandle = null; pendingUser = null;
